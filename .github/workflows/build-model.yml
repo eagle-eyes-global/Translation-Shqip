@@ -17,14 +17,30 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup; sudo docker image prune -af >/dev/null 2>&1 || true
-          sudo fallocate -l 6G /swapfile2 && sudo chmod 600 /swapfile2 && sudo mkswap /swapfile2 && sudo swapon /swapfile2
+          sudo fallocate -l 4G /swapfile2 && sudo chmod 600 /swapfile2 && sudo mkswap /swapfile2 && sudo swapon /swapfile2
       - name: Convert Flutra/whisper-large-v3-turbo-sq-v2 to sherpa-onnx int8
         run: |
           set -o pipefail
           pip install --quiet torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu 2>&1 | tail -3
           pip install --quiet openai-whisper 'transformers<4.50' onnx onnxruntime 2>&1 | tail -3
           python3 -u ci/convert_hf_whisper.py Flutra/whisper-large-v3-turbo-sq-v2 sqturbo 2>&1 | grep -v Warning | tail -20
+      - name: Publish full-precision pack (sqturbo-full-v1)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la turbo-* sqturbo-*
+          mv turbo-encoder.onnx sqturbofull-encoder.onnx
+          mv turbo-decoder.onnx sqturbofull-decoder.onnx
+          cp sqturbo-tokens.txt sqturbofull-tokens.txt
+          split -b 1900M -a 2 turbo-encoder.weights turbo-encoder.weights.part
+          rm turbo-encoder.weights
+          ls -la sqturbofull-* turbo-encoder.weights.part*
+          gh release delete sqturbo-full-v1 -y 2>/dev/null || true
+          gh release create sqturbo-full-v1 sqturbofull-encoder.onnx sqturbofull-decoder.onnx sqturbofull-tokens.txt turbo-encoder.weights.part* \
+            --title "Albanian speech pack, full precision v1" \
+            --notes "Full-precision (float32) version of Flutra/whisper-large-v3-turbo-sq-v2 for sherpa-onnx. The encoder weights are split in parts (GitHub file limit); join them in order into turbo-encoder.weights."
       - name: Publish release sqturbo-v1
+        if: github.event_name == 'workflow_dispatch' && false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
