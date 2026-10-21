@@ -1,0 +1,37 @@
+name: Build Albanian word list (spelling correction)
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/build-spell.yml', 'ci/spell/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get hunspell-sq (Luan Kelmendi, GPLv2+) from Fedora
+        run: |
+          docker run --rm -v "$PWD:/out" fedora:latest bash -c "dnf -y -q install hunspell-sq >/dev/null && cp /usr/share/hunspell/sq_AL.* /out/ && cp -r /usr/share/doc/hunspell-sq /out/doc 2>/dev/null; ls /usr/share/licenses/hunspell-sq 2>/dev/null && cp -r /usr/share/licenses/hunspell-sq /out/licenses || true"
+          ls -la sq_AL.* doc licenses 2>/dev/null || true
+      - name: Expand to all word forms
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y hunspell-tools >/dev/null
+          unmunch sq_AL.dic sq_AL.aff 2>/dev/null | iconv -f "$(grep -m1 '^SET' sq_AL.aff | awk '{print $2}')" -t UTF-8 | tr '[:upper:]' '[:lower:]' | grep -v '[0-9/]' | sort -u > sq_words.txt
+          wc -l sq_words.txt; ls -la sq_words.txt; head -5 sq_words.txt
+          grep -x -c 'përshëndetje' sq_words.txt || true
+          grep -x -c 'përshindetje' sq_words.txt || true
+          gzip -9 -k sq_words.txt; ls -la sq_words.txt.gz
+          cp sq_AL.aff sq_AL.dic . 2>/dev/null || true
+          { echo "Albanian word list expanded from hunspell-sq (sq_AL) by Luan Kelmendi."; echo "License: GPLv2 or later (see the hunspell-sq package)."; cat doc/README* 2>/dev/null; } > SQ_WORDS_LICENSE.txt
+      - name: Publish release sq-spell-v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete sq-spell-v1 -y 2>/dev/null || true
+          gh release create sq-spell-v1 sq_words.txt.gz SQ_WORDS_LICENSE.txt --title "Albanian word list v1" \
+            --notes "All word forms from hunspell-sq (sq_AL, Luan Kelmendi, GPLv2+), lower-case, one per line. Used by InContact to correct small spelling errors in recognised speech."
