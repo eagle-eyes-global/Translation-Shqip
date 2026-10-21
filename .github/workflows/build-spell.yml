@@ -14,24 +14,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Get hunspell-sq (Luan Kelmendi, GPLv2+) from Fedora
+      - name: Get hunspell-sq (Luan Kelmendi, GPLv2+) and expand all word forms
         run: |
-          docker run --rm -v "$PWD:/out" fedora:latest bash -c "dnf -y -q install hunspell-sq >/dev/null && cp /usr/share/hunspell/sq_AL.* /out/ && cp -r /usr/share/doc/hunspell-sq /out/doc 2>/dev/null; ls /usr/share/licenses/hunspell-sq 2>/dev/null && cp -r /usr/share/licenses/hunspell-sq /out/licenses || true"
-          ls -la sq_AL.* doc licenses 2>/dev/null || true
-      - name: Expand to all word forms
-        run: |
-          sudo apt-get -qq update && sudo apt-get -qq install -y hunspell-tools >/dev/null
-          unmunch sq_AL.dic sq_AL.aff 2>/dev/null | iconv -f "$(grep -m1 '^SET' sq_AL.aff | awk '{print $2}')" -t UTF-8 | tr '[:upper:]' '[:lower:]' | grep -v '[0-9/]' | sort -u > sq_words.txt
+          set +e
+          {
+          docker run --rm -v "$PWD:/out" fedora:latest bash -c "dnf -y -q install hunspell-sq hunspell >/dev/null 2>&1; ls /usr/share/hunspell/ | grep -i sq; cp /usr/share/hunspell/sq_AL.* /out/; which unmunch; ls /usr/share/licenses/hunspell-sq /usr/share/doc/hunspell-sq; cat /usr/share/doc/hunspell-sq/README* > /out/README-sq.txt 2>/dev/null; true"
+          ls -la
+          head -c 300 sq_AL.aff; echo
+          head -3 sq_AL.dic
+          sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y hunspell-tools >/dev/null 2>&1; which unmunch
+          ENC=$(grep -m1 '^SET' sq_AL.aff | awk '{print $2}' | tr -d '\r'); echo "encoding: $ENC"
+          unmunch sq_AL.dic sq_AL.aff > raw.txt 2>unmunch.err; echo "unmunch exit $?"; tail -3 unmunch.err; wc -l raw.txt
+          iconv -f "${ENC:-UTF-8}" -t UTF-8 raw.txt | tr '[:upper:]' '[:lower:]' | grep -v '[0-9/]' | sort -u > sq_words.txt
           wc -l sq_words.txt; ls -la sq_words.txt; head -5 sq_words.txt
-          grep -x -c 'përshëndetje' sq_words.txt || true
-          grep -x -c 'përshindetje' sq_words.txt || true
+          echo -n "përshëndetje: "; grep -x -c 'përshëndetje' sq_words.txt
+          echo -n "përshindetje: "; grep -x -c 'përshindetje' sq_words.txt
+          echo -n "bukë: "; grep -x -c 'bukë' sq_words.txt
           gzip -9 -k sq_words.txt; ls -la sq_words.txt.gz
-          cp sq_AL.aff sq_AL.dic . 2>/dev/null || true
-          { echo "Albanian word list expanded from hunspell-sq (sq_AL) by Luan Kelmendi."; echo "License: GPLv2 or later (see the hunspell-sq package)."; cat doc/README* 2>/dev/null; } > SQ_WORDS_LICENSE.txt
+          } > spell.log 2>&1
+          cat spell.log
+          { echo "Albanian word list expanded from hunspell-sq (sq_AL) by Luan Kelmendi."; echo "License: GPLv2 or later."; cat README-sq.txt 2>/dev/null; } > SQ_WORDS_LICENSE.txt
       - name: Publish release sq-spell-v1
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete sq-spell-v1 -y 2>/dev/null || true
-          gh release create sq-spell-v1 sq_words.txt.gz SQ_WORDS_LICENSE.txt --title "Albanian word list v1" \
+          files="spell.log SQ_WORDS_LICENSE.txt"; [ -s sq_words.txt.gz ] && files="$files sq_words.txt.gz"
+          gh release create sq-spell-v1 $files --title "Albanian word list v1" \
             --notes "All word forms from hunspell-sq (sq_AL, Luan Kelmendi, GPLv2+), lower-case, one per line. Used by InContact to correct small spelling errors in recognised speech."
